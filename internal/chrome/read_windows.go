@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 
@@ -44,16 +45,48 @@ func NewWindowsReader(dbPath, localStatePath string) (*WindowsReader, error) {
 	}, nil
 }
 
-// ReadCookies reads cookies from Chrome's SQLite store, decrypts them,
-// and filters by the given allowlist.
-//
-// The database is copied to a temp file (with retry) to avoid locking
-// issues with a running Chrome instance.
+var cdpOnce sync.Once
+
+// ReadCookies reads cookies from Chrome, trying CDP first (for Chrome 127+
+// with App-Bound Encryption), falling back to direct SQLite + DPAPI decryption.
 func (r *WindowsReader) ReadCookies(allowlist []string) ([]protocol.Cookie, error) {
 	if len(allowlist) == 0 {
 		return nil, nil
 	}
 
+	// Try CDP (works with Chrome 127+ App-Bound Encryption)
+	cookies, err := cdpReadCookies(allowlist)
+	if err == nil {
+		return cookies, nil
+	}
+
+	// One-shot attempt to relaunch Chrome with debug port
+	cdpOnce.Do(func() {
+		if cdpCheckPort("http://localhost:9222") {
+			return
+		}
+		log.Println("chrome: App-Bound Encryption detected (Chrome 127+)")
+		log.Println("chrome: to read cookies, close Chrome then start with:")
+		log.Println(`chrome:   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222`)
+		log.Println("chrome: or let cookinc try: relaunching Chrome with debug port...")
+		if launchErr := LaunchWithDebugPort(); launchErr != nil {
+			log.Printf("chrome: relaunch failed (try manually): %v", launchErr)
+		}
+	})
+
+	// Try CDP again after relaunch
+	cookies, err = cdpReadCookies(allowlist)
+	if err == nil {
+		return cookies, nil
+	}
+
+	// Fall back to direct DB decryption (may fail for v20)
+	return r.readCookiesDB(allowlist)
+}
+
+// readCookiesDB reads cookies from Chrome's SQLite store directly,
+// using DPAPI decryption (works for Chrome < 127; partial for 127+).
+func (r *WindowsReader) readCookiesDB(allowlist []string) ([]protocol.Cookie, error) {
 	tmpPath, err := r.copyDB()
 	if err != nil {
 		return nil, err
@@ -67,8 +100,9 @@ func (r *WindowsReader) ReadCookies(allowlist []string) ([]protocol.Cookie, erro
 	defer db.Close()
 
 	rows, err := db.Query(`
-		SELECT host_key, name, value, path, expires_utc, is_secure, is_httponly
+		SELECT host_key, name, encrypted_value, path, expires_utc, is_secure, is_httponly
 		FROM cookies
+		WHERE length(encrypted_value) > 0
 		ORDER BY host_key`)
 	if err != nil {
 		return nil, fmt.Errorf("chrome: query cookies: %w", err)
@@ -90,7 +124,7 @@ func (r *WindowsReader) ReadCookies(allowlist []string) ([]protocol.Cookie, erro
 			continue
 		}
 
-		plaintext, err := decryptCookieValue(valBlob, r.key)
+		plaintext, err := decryptCookieValue(valBlob, r.key, c.Name)
 		if err != nil {
 			log.Printf("chrome: decrypt %s/%s: %v", c.HostKey, c.Name, err)
 			continue

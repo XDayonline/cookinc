@@ -3,6 +3,7 @@ module github.com/XDayonline/cookinc
 go 1.25.0
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.51.0

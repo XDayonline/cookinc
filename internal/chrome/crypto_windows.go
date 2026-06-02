@@ -59,9 +59,11 @@ func decryptDPAPI(data []byte) ([]byte, error) {
 
 // readEncryptionKey reads the Chrome AES encryption key from Local State.
 //
-// The key is stored in JSON at os_crypt.encrypted_key, base64-encoded
-// with a "DPAPI" prefix. After stripping the prefix and base64-decoding,
-// it is decrypted with DPAPI to produce the 256-bit AES key.
+// For Chrome < 127: os_crypt.encrypted_key (DPAPI-wrapped AES key).
+// For Chrome >= 127: os_crypt.app_bound_encrypted_key (App-Bound key)
+// is used for v20 cookies; the legacy encrypted_key is used for v10/v11.
+//
+// Both values are base64-encoded with a prefix ("DPAPI" or "APBB").
 func readEncryptionKey(localStatePath string) ([]byte, error) {
 	data, err := os.ReadFile(localStatePath)
 	if err != nil {
@@ -70,45 +72,71 @@ func readEncryptionKey(localStatePath string) ([]byte, error) {
 
 	var state struct {
 		OSCrypt struct {
-			EncryptedKey string `json:"encrypted_key"`
+			EncryptedKey        string `json:"encrypted_key"`
+			AppBoundEncryptedKey string `json:"app_bound_encrypted_key"`
 		} `json:"os_crypt"`
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("chrome: parse Local State: %w", err)
 	}
 
+	// Try App-Bound key first (Chrome 127+)
+	if state.OSCrypt.AppBoundEncryptedKey != "" {
+		key, err := decryptWrappedKey(state.OSCrypt.AppBoundEncryptedKey, "APBB")
+		if err == nil && len(key) == 32 {
+			return key, nil
+		}
+		// Fall through to legacy key
+	}
+
 	if state.OSCrypt.EncryptedKey == "" {
-		return nil, fmt.Errorf("chrome: os_crypt.encrypted_key not found in Local State")
+		return nil, fmt.Errorf("chrome: no encryption key found in Local State")
 	}
 
-	raw, err := base64.StdEncoding.DecodeString(state.OSCrypt.EncryptedKey)
+	key, err := decryptWrappedKey(state.OSCrypt.EncryptedKey, "DPAPI")
 	if err != nil {
-		return nil, fmt.Errorf("chrome: base64 decode encrypted_key: %w", err)
+		return nil, fmt.Errorf("chrome: decrypt key: %w", err)
 	}
 
-	const dpapiPrefix = "DPAPI"
-	if len(raw) < len(dpapiPrefix) || string(raw[:len(dpapiPrefix)]) != dpapiPrefix {
-		return nil, fmt.Errorf("chrome: unexpected encrypted_key prefix (expected 'DPAPI')")
-	}
-
-	key, err := decryptDPAPI(raw[len(dpapiPrefix):])
-	if err != nil {
-		return nil, fmt.Errorf("chrome: DPAPI decrypt key: %w", err)
-	}
-
-	if len(key) != 256/8 {
+	if len(key) != 32 {
 		return nil, fmt.Errorf("chrome: unexpected key length %d (expected 32)", len(key))
 	}
 
 	return key, nil
 }
 
-// decryptCookieValue decrypts a Chrome cookie value using the given AES key.
+// decryptWrappedKey base64-decodes a key that has the given prefix, then
+// DPAPI-decrypts the remaining bytes.
+func decryptWrappedKey(encoded, prefix string) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+
+	if len(raw) < len(prefix) || string(raw[:len(prefix)]) != prefix {
+		return nil, fmt.Errorf("unexpected prefix %q (expected %q)", string(raw[:min(len(raw), len(prefix))]), prefix)
+	}
+
+	return decryptDPAPI(raw[len(prefix):])
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// decryptCookieValue decrypts a Chrome cookie encrypted value using the
+// given AES key. For v20 (Chrome 127+), the cookie name is needed as
+// additional authenticated data (AAD).
 //
-// Chrome cookie value formats:
-//   - v10 prefix (3 bytes): AES-128-CBC, IV (16 bytes) + ciphertext
-//   - v11 prefix (3 bytes): AES-256-GCM, nonce (12 bytes) + ciphertext + tag
-func decryptCookieValue(encrypted []byte, key []byte) ([]byte, error) {
+// Chrome formats:
+//   - v10: AES-128-CBC, IV (16) + ciphertext
+//   - v11: AES-256-GCM, nonce (12) + ciphertext + tag
+//   - v20: AES-256-GCM (App-Bound Encryption),
+//     nonce (12) + ciphertext + tag, AAD = cookie name
+func decryptCookieValue(encrypted []byte, key []byte, cookieName string) ([]byte, error) {
 	if len(encrypted) < 4 {
 		return nil, fmt.Errorf("chrome: cookie value too short (len=%d)", len(encrypted))
 	}
@@ -120,7 +148,19 @@ func decryptCookieValue(encrypted []byte, key []byte) ([]byte, error) {
 	case "v10":
 		return decryptAES128CBC(key[:16], payload)
 	case "v11":
-		return decryptAES256GCM(key, payload)
+		return decryptAES256GCM(key, payload, nil)
+	case "v20":
+		// Try with AAD (cookie name) first, then fall back to no AAD.
+		// Chrome 127+ ABE uses a service-managed key, but some versions
+		// still use the DPAPI-decrypted key with different AAD.
+		result, err := decryptAES256GCM(key, payload, []byte(cookieName))
+		if err != nil {
+			result, err = decryptAES256GCM(key, payload, nil)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	default:
 		return nil, fmt.Errorf("chrome: unknown cookie value prefix %q", prefix)
 	}
@@ -155,9 +195,10 @@ func decryptAES128CBC(key, payload []byte) ([]byte, error) {
 	return plaintext[:len(plaintext)-padding], nil
 }
 
-// decryptAES256GCM decrypts using AES-256-GCM (Chrome v11 format).
+// decryptAES256GCM decrypts using AES-256-GCM (Chrome v11/v20 format).
 // payload: nonce (12 bytes) + ciphertext + AEAD tag.
-func decryptAES256GCM(key, payload []byte) ([]byte, error) {
+// aad is additional authenticated data (nil for v11, cookie name for v20).
+func decryptAES256GCM(key, payload, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("chrome: AES-256-GCM cipher: %w", err)
@@ -175,5 +216,5 @@ func decryptAES256GCM(key, payload []byte) ([]byte, error) {
 	nonce := payload[:gcm.NonceSize()]
 	ciphertext := payload[gcm.NonceSize():]
 
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	return gcm.Open(nil, nonce, ciphertext, aad)
 }
