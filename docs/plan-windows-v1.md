@@ -130,6 +130,22 @@ Reference: [ChromeOSCrypt](https://source.chromium.org/chromium/chromium/src/+/m
 3. Run `cookinc.exe start` — should read cookies and push to sink URL
 4. Verify with `curl http://localhost:9898/get_cookies(github.com)` on the Linux sink
 
+## Reference repos for inspiration
+
+- **agentcookie** (macOS, mais architecture solide) : https://github.com/mvanhorn/agentcookie
+  - `internal/chrome/read.go` — pattern lecture SQLite Chrome
+  - `internal/chrome/crypto_test.go` — pattern decrypt/encrypt tests
+  - `internal/protocol/` — structure enveloppe de sync
+
+- **HackBrowserData** (cross-platform, inclut Windows DPAPI) : https://github.com/moonD4rk/HackBrowserData
+  - `pkg/decrypt/decrypt.go` — DPAPI decrypt pattern en Go
+  - `pkg/browser/chrome.go` — lecture Chrome DB + Local State
+  - Référence pour le ABE (App-Bound Encryption) Chrome >= 127
+
+- **chlonium** (Windows Chrome → re-encrypt) : https://github.com/rxwx/chlonium
+  - Décryptage DPAPI + ré-encryptage AES-128-CBC
+  - Utile pour comprendre le format v10/v11
+
 ## PR structure
 
 One PR on the existing repo with all Windows files + updated `cmd/cookinc/main.go`.
