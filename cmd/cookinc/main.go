@@ -1,22 +1,26 @@
-// cookinc is the Windows-side daemon CLI.
-// It watches Chrome's cookie store, decrypts via DPAPI, filters by allowlist,
-// and pushes encrypted payloads to the configured sink.
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	root := &cobra.Command{
+		Use:   "cookinc",
+		Short: "Chrome cookie sync from Windows to your Linux agent",
+		Long: `cookinc syncs your Chrome sessions from Windows to a Linux sink
+where AI agents (Hermes, Claude Code, Cursor) can read them.
+
+Cross-platform, encrypted (AES-256-GCM), allowlist-only.`,
+	}
+
+	root.AddCommand(initCmd())
+	root.AddCommand(startCmd())
+	root.AddCommand(statusCmd())
+
+	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
-}
-
-func run() error {
-	fmt.Println("cookinc — Windows daemon (not yet implemented)")
-	fmt.Println("See cmd/cookinc/cmd/ for the cobra subcommand tree")
-	return nil
 }
