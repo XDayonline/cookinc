@@ -1,0 +1,72 @@
+# goreleaser configuration for cookinc
+# Builds cross-platform binaries for Windows (source) and Linux (sink).
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cookinc
+    main: ./cmd/cookinc/
+    binary: cookinc
+    goos:
+      - windows
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: cookinc-mcp
+    main: ./cmd/cookinc-mcp/
+    binary: cookinc-mcp
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: cookinc
+    builds:
+      - cookinc
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - examples/*
+      - docs/*
+
+  - id: cookinc-mcp
+    builds:
+      - cookinc-mcp
+    format: tar.gz
+    files:
+      - LICENSE
+      - README.md
+      - examples/sink.yaml
+      - docs/*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
