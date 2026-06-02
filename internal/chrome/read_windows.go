@@ -1,13 +1,10 @@
 package chrome
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -50,8 +47,8 @@ func NewWindowsReader(dbPath, localStatePath string) (*WindowsReader, error) {
 // ReadCookies reads cookies from Chrome's SQLite store, decrypts them,
 // and filters by the given allowlist.
 //
-// The database is copied to a temp file to avoid locking issues with a
-// running Chrome instance.
+// The database is copied to a temp file (with retry) to avoid locking
+// issues with a running Chrome instance.
 func (r *WindowsReader) ReadCookies(allowlist []string) ([]protocol.Cookie, error) {
 	if len(allowlist) == 0 {
 		return nil, nil
@@ -113,37 +110,6 @@ func (r *WindowsReader) ReadCookies(allowlist []string) ([]protocol.Cookie, erro
 // DBPath returns the path to the Chrome Cookies SQLite file.
 func (r *WindowsReader) DBPath() string {
 	return r.dbPath
-}
-
-// copyDB copies the Chrome Cookies SQLite file to a temp location.
-// This avoids locking issues when Chrome is running.
-func (r *WindowsReader) copyDB() (string, error) {
-	var tmpID [8]byte
-	if _, err := io.ReadFull(rand.Reader, tmpID[:]); err != nil {
-		return "", fmt.Errorf("chrome: rand: %w", err)
-	}
-
-	tmpPath := filepath.Join(os.TempDir(),
-		fmt.Sprintf("cookinc-cookies-%x.db", tmpID[:]))
-
-	src, err := os.Open(r.dbPath)
-	if err != nil {
-		return "", fmt.Errorf("chrome: open source db: %w", err)
-	}
-	defer src.Close()
-
-	dst, err := os.Create(tmpPath)
-	if err != nil {
-		return "", fmt.Errorf("chrome: create temp db: %w", err)
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("chrome: copy db: %w", err)
-	}
-
-	return tmpPath, nil
 }
 
 // domainMatches checks if cookieDomain matches any domain in the allowlist.
