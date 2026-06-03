@@ -1,5 +1,3 @@
-// Package chrome provides the local cookie ingestion server.
-// The Chrome extension POSTs cookies here; cookinc encrypts and forwards.
 package chrome
 
 import (
@@ -7,30 +5,28 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/XDayonline/cookinc/internal/crypto"
 	"github.com/XDayonline/cookinc/internal/protocol"
 )
 
-// BridgeConfig is served to the Chrome extension via /config endpoint.
 type BridgeConfig struct {
 	Allowlist []string `json:"allowlist"`
 	Interval  int      `json:"interval"`
 }
 
-// BridgeServer receives cookies from the Chrome extension,
-// encrypts them, and forwards to the sink URL.
 type BridgeServer struct {
-	addr       string
-	allowlist  []string
-	secretKey  []byte
-	sinkURL    string
-	hostname   string
-	client     *http.Client
+	addr      string
+	mu        sync.RWMutex
+	allowlist []string
+	secretKey []byte
+	sinkURL   string
+	hostname  string
+	client    *http.Client
 }
 
-// NewBridgeServer creates a new bridge server.
 func NewBridgeServer(addr string, allowlist []string, secret, sinkURL, hostname string) *BridgeServer {
 	return &BridgeServer{
 		addr:      addr,
@@ -42,16 +38,13 @@ func NewBridgeServer(addr string, allowlist []string, secret, sinkURL, hostname 
 	}
 }
 
-// ListenAndServe starts the bridge HTTP server and blocks.
 func (s *BridgeServer) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/config", s.handleConfig)
 	mux.HandleFunc("/cookies", s.handleCookies)
+	mux.HandleFunc("/sync-now", s.handleSyncNow)
 
 	log.Printf("cookinc: bridge server on %s", s.addr)
-	log.Printf("cookinc: install extension from ./extension/ in chrome://extensions (dev mode)")
-	log.Printf("cookinc: allowlist: %v", s.allowlist)
-
 	return (&http.Server{
 		Addr:              s.addr,
 		Handler:           mux,
@@ -61,21 +54,46 @@ func (s *BridgeServer) ListenAndServe() error {
 	}).ListenAndServe()
 }
 
-func (s *BridgeServer) handleConfig(w http.ResponseWriter, r *http.Request) {
+func cors(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(BridgeConfig{
-		Allowlist: s.allowlist,
-		Interval:  5,
-	})
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
+func (s *BridgeServer) handleConfig(w http.ResponseWriter, r *http.Request) {
+	cors(w)
+	if r.Method == "OPTIONS" { return }
+
+	if r.Method == "POST" {
+		var req struct {
+			Allowlist []string `json:"allowlist"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		s.allowlist = req.Allowlist
+		s.mu.Unlock()
+		log.Printf("bridge: allowlist updated: %v", req.Allowlist)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		return
+	}
+
+	s.mu.RLock()
+	al := s.allowlist
+	s.mu.RUnlock()
+	json.NewEncoder(w).Encode(BridgeConfig{Allowlist: al, Interval: 5})
 }
 
 func (s *BridgeServer) handleCookies(w http.ResponseWriter, r *http.Request) {
+	cors(w)
+	if r.Method == "OPTIONS" { return }
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	var rawCookies []struct {
 		Domain   string  `json:"domain"`
@@ -112,7 +130,21 @@ func (s *BridgeServer) handleCookies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward to sink
+	s.forwardToSink(w, cookies)
+}
+
+func (s *BridgeServer) handleSyncNow(w http.ResponseWriter, r *http.Request) {
+	cors(w)
+	if r.Method == "OPTIONS" { return }
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{"status": "ok", "message": "triggered"})
+}
+
+func (s *BridgeServer) forwardToSink(w http.ResponseWriter, cookies []protocol.Cookie) {
 	env := protocol.NewEnvelope(s.hostname, cookies)
 	plaintext, err := json.Marshal(env)
 	if err != nil {
