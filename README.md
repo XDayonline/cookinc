@@ -35,30 +35,34 @@ cookinc is the **only tool built for the Windows → Linux agent workflow**.
 ## How it works
 
 ```
-Windows (your daily driver)           Linux VPS (your agent)
-══════════════════════════            ═══════════════════════
+Windows (your PC)                        Linux VPS (your agent)
+══════════════════════════               ═══════════════════════
 
-Chrome cookies change
-(fsnotify on Cookies SQLite)
-       │
-       ▼
-cookinc daemon                           cookinc-mcp
-  ├─ Decrypt via DPAPI                    ├─ HTTP /sync listener
-  ├─ Filter by allowlist                  ├─ AES-256-GCM decrypt
-  ├─ AES-256-GCM seal                     ├─ Re-encrypt for Linux Chrome
-  └─ POST /sync ─────────────────────►    ├─ Write to Cookies SQLite
-                                          └─ MCP server on :9898
-                                               │
-                                               ▼
-                                        Hermes / Claude / Cursor
-                                        query: get_cookies("github.com")
+source.yaml ───► cookinc.exe (daemon)
+(allowlist,      │  localhost:19999
+ secret,         ├─ GET /config ←──── Extension Chrome
+ sink URL)       │                       (chrome.cookies API,
+                 ├─ POST /cookies ──→     filtered by allowlist)
+                 │
+                 └─ AES-256-GCM encrypt
+                    │
+                    POST /sync
+                    │
+               Internet ────────────► sync.example.com
+                                         │
+                                    Cloudflare Tunnel
+                                         │
+                                    cookinc-mcp (sink)
+                                      ├─ AES-256-GCM decrypt
+                                      ├─ Sidecar DB (SQLite)
+                                      └─ MCP server :9898
+                                           │
+                                           ▼
+                                    Hermes / Claude Code / Cursor
+                                    query: get_cookies("github.com")
 ```
 
-Three delivery surfaces — pick what fits your agent:
-
-1. **Chrome SQLite** — cookies written to the real Linux Chrome profile. Any unmodified tool (curl, yt-dlp, a browser-driving agent) reads them automatically.
-2. **MCP** — agents query via Model Context Protocol. `get_cookies("github.com")` returns the session. Hermes, Claude Code, Cursor all speak MCP.
-3. **Sidecar** — `~/.cookinc/cookies.json` for scripts or one-liners.
+**Key difference from typical cookie sync tools:** Chrome 148+ uses App-Bound Encryption, which blocks direct SQLite decryption. Cookinc bypasses this cleanly using the `chrome.cookies` API via a browser extension — no cat-and-mouse with Chrome internals.
 
 ## Quick start
 
