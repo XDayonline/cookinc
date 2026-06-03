@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -146,17 +145,4 @@ func (r *WindowsReader) DBPath() string {
 	return r.dbPath
 }
 
-// domainMatches checks if cookieDomain matches any domain in the allowlist.
-//
-// "github.com" matches cookies for "github.com", ".github.com",
-// "www.github.com", "api.github.com", etc.
-func domainMatches(cookieDomain string, allowlist []string) bool {
-	cd := strings.ToLower(cookieDomain)
-	for _, allowed := range allowlist {
-		a := strings.ToLower(allowed)
-		if cd == a || cd == "."+a || strings.HasSuffix(cd, "."+a) {
-			return true
-		}
-	}
-	return false
-}
+// domainMatches defined in helpers.go

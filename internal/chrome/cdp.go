@@ -1,12 +1,16 @@
 // Package chrome provides CDP-based cookie reading for Chrome 127+
 // where App-Bound Encryption prevents direct DB decryption.
+//
+// Build constraint: windows only (domainMatches requires Windows-specific files).
+//
+//go:build windows
+
 package chrome
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -116,6 +120,7 @@ func cdpGetWebSocketURL(baseURL string) (string, error) {
 }
 
 // cdpCheckPort checks if the Chrome DevTools Protocol port is responding.
+// cdpCheckPort checks if the Chrome DevTools Protocol port is responding.
 func cdpCheckPort(baseURL string) bool {
 	client := &http.Client{Timeout: 1 * time.Second}
 	resp, err := client.Get(baseURL + "/json/version")
@@ -124,17 +129,4 @@ func cdpCheckPort(baseURL string) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
-}
-
-func sameSiteToInt(s string) int {
-	switch strings.ToLower(s) {
-	case "lax":
-		return 1
-	case "strict":
-		return 2
-	case "none":
-		return 3
-	default:
-		return 0
-	}
 }

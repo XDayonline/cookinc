@@ -74,6 +74,12 @@ func NewHTTPServer(handler *ToolHandler, addr string) *http.Server {
 		})
 	})
 
+	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(dashboardHTML))
+	})
+
 	return &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -172,3 +178,87 @@ func processMessage(req *Message, handler *ToolHandler) Response {
 		return Response{JSONRPC: "2.0", ID: req.ID, Error: &ErrorObject{Code: -32601, Message: "Method not found"}}
 	}
 }
+
+var dashboardHTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cookinc Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#111;color:#e5e7eb;padding:20px}
+h1{font-size:22px;margin-bottom:4px;color:#fbbf24}
+.sub{font-size:13px;color:#6b7280;margin-bottom:20px}
+.stats{display:flex;gap:12px;margin-bottom:20px}
+.stat{background:#1f2937;border-radius:10px;padding:14px 20px;flex:1}
+.stat .num{font-size:28px;font-weight:700;color:#fbbf24}
+.stat .label{font-size:12px;color:#9ca3af}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;color:#6b7280;padding:8px 12px;border-bottom:1px solid #374151}
+td{padding:10px 12px;border-bottom:1px solid #1f2937;font-size:14px}
+td a{color:#60a5fa;text-decoration:none}
+td a:hover{text-decoration:underline}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dot.on{background:#22c55e}
+.dot.off{background:#6b7280}
+.updated{font-size:12px;color:#6b7280;margin-top:20px;text-align:center}
+</style>
+</head>
+<body>
+<h1>🍪 Cookinc</h1>
+<div class="sub">Tableau de bord des sessions synchronisées</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="num" id="totalCookies">—</div>
+    <div class="label">Cookies</div>
+  </div>
+  <div class="stat">
+    <div class="num" id="totalDomains">—</div>
+    <div class="label">Domaines</div>
+  </div>
+  <div class="stat">
+    <div class="num" id="lastUpdate">—</div>
+    <div class="label">Dernière sync</div>
+  </div>
+</div>
+
+<table>
+<thead><tr><th>Domaine</th><th>Cookies</th><th>Dernière activité</th></tr></thead>
+<tbody id="rows"></tbody>
+</table>
+
+<div class="updated" id="refreshed">Chargement...</div>
+
+<script>
+async function refresh() {
+  try {
+    const [health, domainsResp] = await Promise.all([
+      fetch('/health').then(r=>r.json()),
+      fetch('/api/domains').then(r=>r.json())
+    ]);
+    document.getElementById('totalCookies').textContent = health.mcp.cookie_count;
+    document.getElementById('totalDomains').textContent = domainsResp.count;
+    document.getElementById('lastUpdate').textContent = health.mcp.last_updated || '';
+    document.getElementById('refreshed').textContent = 'Mis à jour: ' + new Date().toLocaleTimeString('fr-FR');
+
+    const tbody = document.getElementById('rows');
+    tbody.innerHTML = '';
+    for (const d of domainsResp.domains) {
+      const cookieResp = await fetch('/api/cookies?domain='+encodeURIComponent(d));
+      const cookieData = await cookieResp.json();
+      const count = cookieData.count || 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td><a href="/api/cookies?domain='+encodeURIComponent(d)+'" target="_blank">'+d+'</a></td><td>'+count+'</td><td><span class="dot '+(count>0?'on':'off')+'"></span></td>';
+      tbody.appendChild(tr);
+    }
+  } catch(e) {
+    document.getElementById('refreshed').textContent = 'Erreur: ' + e.message;
+  }
+}
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>`
