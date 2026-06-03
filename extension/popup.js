@@ -14,11 +14,13 @@ async function loadAllowlist() {
     const r = await fetch(BRIDGE + '/config');
     const cfg = await r.json();
     allowlist = cfg.allowlist || [];
-    status(`${allowlist.length} domaines`, true);
+    $('statusBar').textContent = `✅ ${allowlist.length} domaines • bridge actif`;
+    $('statusBar').className = 'status-bar ok';
     render();
     initCurrentDomain();
   } catch {
-    status('Bridge injoignable sur :19999');
+    $('statusBar').textContent = '⛔ Bridge arrêté • Lance Cookinc Bridge.lnk sur le bureau';
+    $('statusBar').className = 'status-bar err';
     allowlist = [];
     render();
   }
