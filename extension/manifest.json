@@ -3,7 +3,7 @@
   "name": "Cookinc Bridge",
   "version": "1.0",
   "description": "Sync Chrome cookies to cookinc daemon",
-  "permissions": ["cookies", "alarms"],
+  "permissions": ["cookies", "alarms", "tabs"],
   "icons": {
     "16": "icons/icon16.png",
     "24": "icons/icon24.png",
