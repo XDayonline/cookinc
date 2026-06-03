@@ -47,6 +47,8 @@ func (s *SinkServer) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sync", s.handleSync)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/api/domains", s.handleDomains)
+	mux.HandleFunc("/dashboard", s.handleDashboard)
 
 	server := &http.Server{
 		Addr:              s.addr,
@@ -144,6 +146,80 @@ func (s *SinkServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"listeners":    s.addr,
 	})
 }
+
+func (s *SinkServer) handleDomains(w http.ResponseWriter, r *http.Request) {
+	domains, err := s.store.ListDomains()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"domains": []string{}, "count": 0})
+		return
+	}
+	if domains == nil {
+		domains = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"domains": domains, "count": len(domains)})
+}
+
+func (s *SinkServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(dashboardHTML))
+}
+
+var dashboardHTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cookinc Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#111;color:#e5e7eb;padding:20px}
+h1{font-size:22px;margin-bottom:4px;color:#fbbf24}
+.sub{font-size:13px;color:#6b7280;margin-bottom:20px}
+.stats{display:flex;gap:12px;margin-bottom:20px}
+.stat{background:#1f2937;border-radius:10px;padding:14px 20px;flex:1}
+.stat .num{font-size:28px;font-weight:700;color:#fbbf24}
+.stat .label{font-size:12px;color:#9ca3af}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;color:#6b7280;padding:8px 12px;border-bottom:1px solid #374151}
+td{padding:10px 12px;border-bottom:1px solid #1f2937;font-size:14px}
+td a{color:#60a5fa;text-decoration:none}
+td a:hover{text-decoration:underline}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dot.on{background:#22c55e}
+.dot.off{background:#6b7280}
+.updated{font-size:12px;color:#6b7280;margin-top:20px;text-align:center}
+</style>
+</head>
+<body>
+<h1>🍪 Cookinc</h1>
+<div class="sub">Tableau de bord des sessions synchronisées</div>
+<div class="stats">
+<div class="stat"><div class="num" id="totalCookies">&mdash;</div><div class="label">Cookies</div></div>
+<div class="stat"><div class="num" id="totalDomains">&mdash;</div><div class="label">Domaines</div></div>
+<div class="stat"><div class="num" id="lastUpdate">&mdash;</div><div class="label">Dernière sync</div></div>
+</div>
+<table><thead><tr><th>Domaine</th><th>Cookies</th><th>Actif</th></tr></thead><tbody id="rows"></tbody></table>
+<div class="updated" id="refreshed">Chargement...</div>
+<script>
+const base=location.pathname.replace(/\/dashboard/,'');
+async function refresh(){try{
+const h=await fetch(base+'/health').then(r=>r.json());
+const d=await fetch(base+'/api/domains').then(r=>r.json());
+document.getElementById('totalCookies').textContent=h.cookie_count;
+document.getElementById('totalDomains').textContent=d.count;
+document.getElementById('lastUpdate').textContent=h.last_updated||'';
+document.getElementById('refreshed').textContent='Mis a jour: '+new Date().toLocaleTimeString('fr-FR');
+const tb=document.getElementById('rows');tb.innerHTML='';
+if(d.domains)for(const dom of d.domains){
+tb.innerHTML+='<tr><td>'+dom+'</td><td><span class="dot on"></span></td></tr>';
+}}catch(e){document.getElementById('refreshed').textContent='Erreur: '+e.message}
+}
+refresh();setInterval(refresh,10000);
+</script>
+</body>
+</html>`
 
 // SequenceTracker provides in-memory replay defense.
 type SequenceTracker struct {
