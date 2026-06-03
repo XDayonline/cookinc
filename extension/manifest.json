@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Cookinc Bridge",
+  "version": "1.0",
+  "description": "Sync Chrome cookies to cookinc daemon",
+  "permissions": ["cookies"],
+  "host_permissions": [
+    "http://localhost:19999/*",
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
