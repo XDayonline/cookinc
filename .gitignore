@@ -28,5 +28,23 @@ Thumbs.db
 
 # Cookinc local state
 .cookinc/
+.config/cookinc/
+source.yaml
+sink.yaml
 *.db
+*.db-wal
+*.db-shm
 cookies-plain.json
+
+# Secrets / local env
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Logs / runtime state
+*.log
+*.pid
