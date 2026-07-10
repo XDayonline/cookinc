@@ -1,0 +1,11 @@
+# cookinc sink config (Linux)
+listen:
+  addr: "127.0.0.1:9876"
+chrome:
+  db_path: "~/.config/google-chrome/Default/Cookies"
+security:
+  shared_secret: "replace-with-32-char-min-secret"
+mcp:
+  enabled: true
+  addr: "127.0.0.1:9898"
+  db_path: "~/.cookinc/cookies.db"
