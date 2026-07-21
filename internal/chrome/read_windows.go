@@ -145,4 +145,4 @@ func (r *WindowsReader) DBPath() string {
 	return r.dbPath
 }
 
-// domainMatches defined in helpers.go
+// domainMatches defined in match.go

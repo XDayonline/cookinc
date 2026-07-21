@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -78,6 +79,49 @@ func NewHTTPServer(handler *ToolHandler, addr string) *http.Server {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(dashboardHTML))
+	})
+
+	// Netscape cookie file export — compatible with curl -b, yt-dlp, etc.
+	mux.HandleFunc("/cookies.txt", func(w http.ResponseWriter, r *http.Request) {
+		domain := r.URL.Query().Get("domain")
+		if domain == "" {
+			http.Error(w, "missing domain query param", http.StatusBadRequest)
+			return
+		}
+		result, err := handler.GetCookies(domain)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b, _ := json.Marshal(result)
+		var wrapper struct {
+			Cookies []struct {
+				HostKey    string `json:"host_key"`
+				Name       string `json:"name"`
+				Value      string `json:"value"`
+				Path       string `json:"path"`
+				ExpiresUTC int64  `json:"expires_utc"`
+				IsSecure   bool   `json:"is_secure"`
+				IsHTTPOnly bool   `json:"is_httponly"`
+			} `json:"cookies"`
+		}
+		json.Unmarshal(b, &wrapper)
+
+		w.Header().Set("Content-Type", "text/plain")
+		for _, c := range wrapper.Cookies {
+			domain := c.HostKey
+			secure := "FALSE"
+			if c.IsSecure {
+				secure = "TRUE"
+			}
+			expiry := c.ExpiresUTC
+			if expiry <= 0 {
+				expiry = 0
+			}
+			fmt.Fprintf(w, "%s	TRUE	%s	%s	%d	%s	%s\n",
+				domain, c.Path, secure,
+				expiry, c.Name, c.Value)
+		}
 	})
 
 	return &http.Server{
